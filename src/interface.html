@@ -1,0 +1,223 @@
+<div id="magic-eight-laboratory">
+  <div class="eight-stage">
+    <div class="eight-shadow" aria-hidden="true"></div>
+    <canvas aria-label="Three-dimensional Magic 8 Ball. Tap to turn it all the way over, or drag to move it." role="img"></canvas>
+    <div class="eight-loading text-small text-muted" role="status">Polishing the glass…</div>
+  </div>
+  <div class="eight-controls">
+    <button type="button" class="btn btn-primary" data-action="turn" disabled><i data-lucide="rotate-3d" aria-hidden="true"></i> Turn the ball</button>
+  </div>
+  <div class="eight-caption" aria-live="polite" aria-atomic="true">Ask a question, then turn the ball.</div>
+</div>
+<style>
+  #magic-eight-laboratory { width:100%; }
+  #magic-eight-laboratory .eight-stage { position:relative; height:clamp(310px,65vw,475px); touch-action:pan-y; }
+  #magic-eight-laboratory canvas { display:block; width:100%; max-width:475px; margin-inline:auto; height:100%; touch-action:none; cursor:grab; position:relative; clip-path:circle(50% at 50% 50%); }
+  #magic-eight-laboratory canvas:active { cursor:grabbing; }
+  #magic-eight-laboratory .eight-shadow { position:absolute; left:29%; bottom:3%; width:42%; height:6%; background:radial-gradient(ellipse, color-mix(in srgb,var(--foreground) 18%,transparent),transparent 69%); }
+  #magic-eight-laboratory .eight-caption { text-align:center; padding-top:14px; min-height:2.4em; }
+  #magic-eight-laboratory .eight-controls { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; align-items:center; }
+  #magic-eight-laboratory .eight-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+  #magic-eight-laboratory .eight-loading[hidden] { display:none; }
+</style>
+<script>
+(async () => {
+'use strict';
+const simulationSource=/* WORKER_SOURCE */;
+/* SIMULATION_CLIENT */
+const root=document.getElementById('magic-eight-laboratory');
+const canvas=root.querySelector('canvas');
+const caption=root.querySelector('.eight-caption');
+const loading=root.querySelector('.eight-loading');
+const turnButton=root.querySelector('[data-action="turn"]');
+const answers=[
+ ['IT IS','CERTAIN'],['IT IS','DECIDEDLY','SO'],['WITHOUT','A DOUBT'],['YES','DEFINITELY'],['YOU MAY','RELY ON IT'],
+ ['AS I SEE IT,','YES'],['MOST','LIKELY'],['OUTLOOK','GOOD'],['YES'],['SIGNS','POINT TO','YES'],
+ ['REPLY HAZY','TRY AGAIN'],['ASK','AGAIN','LATER'],['BETTER NOT','TELL YOU','NOW'],['CANNOT','PREDICT','NOW'],['CONCENTRATE','AND ASK','AGAIN'],
+ ["DON’T","COUNT ON IT"],['MY REPLY','IS NO'],['MY SOURCES','SAY NO'],['OUTLOOK','NOT SO','GOOD'],['VERY','DOUBTFUL']
+];
+let cleanup=()=>{};
+try {
+  const gl=canvas.getContext('webgl2',{alpha:true,antialias:false,premultipliedAlpha:false,powerPreference:'high-performance'});
+  if(!gl) throw new Error('WebGL 2 is needed to render the glass and liquid.');
+  const vertexSource=`#version 300 es
+  in vec2 aPosition;
+  void main(){gl_Position=vec4(aPosition,0.,1.);}`;
+  const fragmentSource=/* FRAGMENT_SHADER */;
+  const textures=[],shaders=[];
+  function shader(type,source){const s=gl.createShader(type);shaders.push(s);gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s));return s;}
+  const program=gl.createProgram();
+  cleanup=()=>{textures.forEach(t=>gl.deleteTexture(t));shaders.forEach(s=>gl.deleteShader(s));gl.deleteProgram(program);};
+  gl.attachShader(program,shader(gl.VERTEX_SHADER,vertexSource));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,fragmentSource));gl.linkProgram(program);
+  if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(program));
+  gl.useProgram(program);
+  const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+  const cleanupGraphics=cleanup;cleanup=()=>{cleanupGraphics();gl.deleteBuffer(buffer);};
+  const pos=gl.getAttribLocation(program,'aPosition');gl.enableVertexAttribArray(pos);gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+  const uniforms={};
+  for(const key of ['uResolution','uBall','uDie','uPosition','uVertices[0]','uFaces[0]','uAtlas','uEight','uLightMode','uOffset','uBubbles[0]']) uniforms[key]=gl.getUniformLocation(program,key);
+  const saved=window.openai?.widgetState?.privateContent;
+  let savedKey=saved?`${saved.face}:${saved.seed}`:'';
+  const seed=saved?.seed??crypto.getRandomValues(new Uint32Array(1))[0];
+  let requestRender=()=>{},disposeSimulation=()=>{};
+  const initialFace=Number.isInteger(saved?.face)?Math.max(0,Math.min(19,saved.face)):0;
+  const physics=await createSimulationClient(simulationSource,seed,initialFace,()=>requestRender(),error=>{
+    caption.textContent='The simulation stopped: '+error.message;caption.setAttribute('role','alert');disposeSimulation();
+  });
+  const cleanupResources=cleanup;cleanup=()=>{physics.destroy();cleanupResources();};
+  if(!root.isConnected){cleanup();return;}
+  gl.uniform3fv(uniforms['uVertices[0]'],new Float32Array(physics.vertices.flatMap(v=>[v.x,v.y,v.z])));
+  gl.uniform3iv(uniforms['uFaces[0]'],new Int32Array(physics.faces.flat()));
+  function addTexture(image,unit,uniform){
+    const t=gl.createTexture();textures.push(t);gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
+    gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+    gl.generateMipmap(gl.TEXTURE_2D);gl.uniform1i(uniforms[uniform],unit);
+  }
+  const atlas=document.createElement('canvas');atlas.width=2560;atlas.height=2048;
+  const ctx=atlas.getContext('2d');ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='white';
+  answers.forEach((lines,index)=>{
+    const x=(index%5)*512,y=Math.floor(index/5)*512;
+    // Match the shader's triangle: apex (.5,.94), base (.04,.08)-(.96,.08).
+    // Keep the lettering in its broad lower section, with real glyph margins.
+    const apexY=512*.06,baseY=512*.92,halfBase=512*.46;
+    const centerY=350,lineSpacing=46,edgeMargin=24;
+    let size=44,placements=[];
+    for(;size>=20;size--){
+      ctx.font=`600 ${size}px Arial, sans-serif`;
+      placements=lines.map((line,j)=>{
+        const baseline=centerY+(j-(lines.length-1)/2)*lineSpacing+size*.35;
+        const metrics=ctx.measureText(line);
+        const top=baseline-metrics.actualBoundingBoxAscent;
+        const halfAvailable=halfBase*(top-apexY)/(baseY-apexY)-edgeMargin;
+        const halfInk=Math.max(metrics.actualBoundingBoxLeft,metrics.actualBoundingBoxRight);
+        return {line,baseline,fits:halfInk<=halfAvailable&&baseline+metrics.actualBoundingBoxDescent<=baseY-edgeMargin};
+      });
+      if(placements.every(p=>p.fits))break;
+    }
+    placements.forEach(p=>ctx.fillText(p.line,x+256,y+p.baseline));
+  });
+  addTexture(atlas,0,'uAtlas');
+  const eight=document.createElement('canvas');eight.width=512;eight.height=512;
+  const ec=eight.getContext('2d');ec.fillStyle='#e9e7dc';ec.fillRect(0,0,512,512);ec.fillStyle='#080a0c';ec.textAlign='center';ec.textBaseline='middle';ec.font='500 410px Arial, sans-serif';ec.fillText('8',256,275);
+  addTexture(eight,1,'uEight');
+  function matrix(q){const{x,y,z,w}=q;return new Float32Array([1-2*(y*y+z*z),2*(x*y+z*w),2*(x*z-y*w),2*(x*y-z*w),1-2*(x*x+z*z),2*(y*z+x*w),2*(x*z+y*w),2*(y*z-x*w),1-2*(x*x+y*y)]);}
+  const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+  const dark=matchMedia('(prefers-color-scheme: dark)');
+  let width=0,height=0,raf=0,last=0,angle=0,turnElapsed=0,turning=false;
+  let handX=0,handY=0,handVX=0,handVY=0,drag=null;
+  let active=false,persisted=false,intersecting=true,drawing=false,disposed=false;
+  const ballQ={x:0,y:0,z:0,w:1};
+  function setCaption(text){if(caption.textContent!==text)caption.textContent=text;}
+  function start(){if(!disposed&&!drawing&&!raf&&intersecting&&!document.hidden){last=performance.now();raf=requestAnimationFrame(frame);}}
+  function resize(){
+    const rect=canvas.getBoundingClientRect();
+    const ratio=Math.min(devicePixelRatio||1,1.75);
+    width=Math.round(rect.width*ratio);height=Math.round(rect.height*ratio);
+    if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
+    gl.viewport(0,0,width,height);start();
+  }
+  function save(face){
+    if(!window.openai?.setWidgetState)return;
+    savedKey=`${face}:${physics.state.seed}`;
+    window.openai.setWidgetState({modelContent:{answer:answers[face].join(' '),physics:'rigid die coupled to a coarse 3D liquid flow solver; per-pixel refractive absorption'},privateContent:{face,seed:physics.state.seed}}).catch(()=>{});
+  }
+  function turn(){
+    if(turning||disposed)return;
+    turning=true;turnElapsed=0;turnButton.disabled=true;
+    active=true;persisted=false;physics.wake();setCaption('Turning the ball…');start();
+  }
+  turnButton.addEventListener('click',turn);
+  canvas.addEventListener('pointerdown',e=>{
+    if(drag||turning)return;
+    const r=canvas.getBoundingClientRect();
+    if(Math.hypot(e.clientX-r.left-r.width/2,e.clientY-r.top-r.height/2)>r.height*.44)return;
+    canvas.setPointerCapture(e.pointerId);drag={id:e.pointerId,lastX:e.clientX,lastY:e.clientY,moved:0,pendingX:0,pendingY:0};
+    start();
+  });
+  canvas.addEventListener('pointermove',e=>{
+    if(!drag||e.pointerId!==drag.id)return;
+    const dx=e.clientX-drag.lastX,dy=e.clientY-drag.lastY;
+    drag.moved+=Math.abs(dx)+Math.abs(dy);
+    drag.pendingX+=dx;drag.pendingY+=dy;drag.lastX=e.clientX;drag.lastY=e.clientY;
+    start();
+  });
+  function flushDrag(){
+    if(!drag)return;
+    const dx=drag.pendingX,dy=drag.pendingY;
+    if(Math.abs(dx)+Math.abs(dy)<.2)return;
+    const distance=Math.hypot(dx,dy);
+    physics.excite(-dx/distance,dy/distance,Math.min(2,distance*.65/24));active=true;persisted=false;setCaption('The die is tumbling…');
+    handVX+=dx*.025;handVY-=dy*.025;drag.pendingX=0;drag.pendingY=0;
+  }
+  function release(e){if(!drag||e.pointerId!==drag.id)return;const tap=drag.moved<6;flushDrag();drag=null;if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);if(tap)turn();start();}
+  canvas.addEventListener('pointerup',release);canvas.addEventListener('pointercancel',e=>{if(drag?.id===e.pointerId){drag=null;start();}});
+  canvas.addEventListener('lostpointercapture',e=>{if(drag?.id===e.pointerId){drag=null;start();}});
+  function frame(now){
+    raf=0;
+    if(!root.isConnected){disposeSimulation();return;}
+    if(disposed||document.hidden||!intersecting)return;
+    drawing=true;flushDrag();
+    const dt=Math.min((now-last)/1000,.05);last=now;
+    if(turning){
+      turnElapsed+=dt;
+      const t=Math.min(1,turnElapsed/4.2);
+      angle=2*Math.PI*t*t*(3-2*t);
+      if(t===1){turning=false;angle=0;turnButton.disabled=false;setCaption('The die is rising…');}
+    }
+    handVX+=(-90*handX-15*handVX)*dt;handVY+=(-90*handY-15*handVY)*dt;handX+=handVX*dt;handY+=handVY*dt;
+    handX=Math.max(-.22,Math.min(.22,handX));handY=Math.max(-.16,Math.min(.16,handY));
+    const displayAngle=reduced.matches?0:angle;
+    ballQ.y=Math.sin(displayAngle/2);ballQ.w=Math.cos(displayAngle/2);
+    physics.setGravity(-1.65*Math.sin(angle),0,1.65*Math.cos(angle));
+    const face=physics.update(now);
+    if(active&&!turning){
+      if(face.settled&&physics.state.settledFor>.5&&physics.state.fluidEnergy<.02&&!drag){
+        setCaption(answers[face.index].join(' ').toLowerCase().replace(/^./,s=>s.toUpperCase()).replace(/\bi\b/g,'I')+'.');
+        if(!persisted){save(face.index);persisted=true;}active=false;
+      } else if(!drag) setCaption(face.windowDistance>.2?'The liquid is still moving…':'Letting the answer settle…');
+    }
+    gl.uniform2f(uniforms.uResolution,width,height);
+    gl.uniformMatrix3fv(uniforms.uBall,false,matrix(ballQ));
+    gl.uniformMatrix3fv(uniforms.uDie,false,matrix(physics.body.quaternion));
+    gl.uniform3f(uniforms.uPosition,physics.body.position.x,physics.body.position.y,physics.body.position.z);
+    gl.uniform2f(uniforms.uOffset,reduced.matches?0:handX,reduced.matches?0:handY);
+    gl.uniform1f(uniforms.uLightMode,dark.matches?0:1);
+    gl.uniform4fv(uniforms['uBubbles[0]'],physics.bubbles);
+    gl.drawArrays(gl.TRIANGLES,0,3);
+    const moving=physics.running||turning||Math.abs(handX)+Math.abs(handY)+Math.abs(handVX)+Math.abs(handVY)>.001;
+    drawing=false;
+    if(moving||drag||active)raf=requestAnimationFrame(frame);
+  }
+  const sizeObserver=new ResizeObserver(resize);sizeObserver.observe(canvas);
+  const visibilityObserver=new IntersectionObserver(entries=>{intersecting=entries[0].isIntersecting;physics.setPaused(!intersecting||document.hidden);if(intersecting)start();});visibilityObserver.observe(root);
+  function visibilityChanged(){physics.setPaused(!intersecting||document.hidden);if(!document.hidden)start();}
+  document.addEventListener('visibilitychange',visibilityChanged);
+  dark.addEventListener('change',start);
+  function stateChanged(event){
+    const next=event.detail?.globals?.widgetState?.privateContent;
+    if(next&&Number.isInteger(next.face)&&next.face>=0&&next.face<20&&!active&&!drag&&`${next.face}:${next.seed}`!==savedKey){savedKey=`${next.face}:${next.seed}`;angle=0;physics.restoreFace(next.face,next.seed);setCaption(answers[next.face].join(' '));start();}
+  }
+  window.addEventListener('openai:set_globals',stateChanged);
+  const removalObserver=new MutationObserver(()=>{if(!root.isConnected)disposeSimulation();});removalObserver.observe(document.body,{childList:true,subtree:true});
+  disposeSimulation=()=>{
+    if(disposed)return;disposed=true;cancelAnimationFrame(raf);raf=0;
+    sizeObserver.disconnect();visibilityObserver.disconnect();removalObserver.disconnect();
+    document.removeEventListener('visibilitychange',visibilityChanged);window.removeEventListener('openai:set_globals',stateChanged);dark.removeEventListener('change',start);
+    turnButton.disabled=true;
+    cleanup();
+  };
+  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();setCaption('Graphics paused. Reopen this view to restore the ball.');disposeSimulation();});
+  requestRender=start;
+  setCaption(answers[initialFace].join(' '));
+  loading.hidden=true;turnButton.disabled=false;
+  root.dataset.ready='true';resize();
+} catch(error){
+  cleanup();
+  console.error(error);loading.hidden=true;caption.classList.remove('text-muted');caption.classList.add('text-destructive');caption.setAttribute('role','alert');caption.textContent='The 3D renderer could not start: '+error.message;
+}
+})();
+</script>
