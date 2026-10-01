@@ -115,7 +115,9 @@ try {
   function start(){if(!disposed&&!drawing&&!raf&&intersecting&&!document.hidden){last=performance.now();raf=requestAnimationFrame(frame);}}
   function resize(){
     const rect=canvas.getBoundingClientRect();
-    const ratio=Math.min(devicePixelRatio||1,1.75);
+    // Trace at least four samples per CSS pixel, then let the compositor
+    // downsample. Canvas MSAA cannot smooth edges inside a ray-traced image.
+    const ratio=Math.min(2.5,Math.max(2,devicePixelRatio||1));
     width=Math.round(rect.width*ratio);height=Math.round(rect.height*ratio);
     if(canvas.width!==width||canvas.height!==height){canvas.width=width;canvas.height=height;}
     gl.viewport(0,0,width,height);start();
