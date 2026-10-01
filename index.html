@@ -1538,15 +1538,15 @@ html&gt;body{padding:0}&lt;/style&gt;
 })();
 &lt;/script&gt;
 &lt;div id=&quot;magic-eight-laboratory&quot;&gt;
+  &lt;div class=&quot;eight-caption sr-only&quot; aria-live=&quot;polite&quot; aria-atomic=&quot;true&quot;&gt;Ask a question, then turn the ball.&lt;/div&gt;
   &lt;div class=&quot;eight-stage&quot;&gt;
     &lt;div class=&quot;eight-shadow&quot; aria-hidden=&quot;true&quot;&gt;&lt;/div&gt;
     &lt;canvas aria-label=&quot;Three-dimensional Magic 8 Ball. Tap to turn it all the way over, or drag to move it.&quot; role=&quot;img&quot;&gt;&lt;/canvas&gt;
     &lt;div class=&quot;eight-loading text-small text-muted&quot; role=&quot;status&quot;&gt;Polishing the glass…&lt;/div&gt;
   &lt;/div&gt;
   &lt;div class=&quot;eight-controls&quot;&gt;
-    &lt;button type=&quot;button&quot; class=&quot;btn btn-primary&quot; data-action=&quot;turn&quot; disabled&gt;&lt;i data-lucide=&quot;rotate-3d&quot; aria-hidden=&quot;true&quot;&gt;&lt;/i&gt; Turn the ball&lt;/button&gt;
+    &lt;button type=&quot;button&quot; class=&quot;btn btn-primary&quot; data-action=&quot;turn&quot; disabled&gt;Concentrate On Your Question&lt;/button&gt;
   &lt;/div&gt;
-  &lt;div class=&quot;eight-caption&quot; aria-live=&quot;polite&quot; aria-atomic=&quot;true&quot;&gt;Ask a question, then turn the ball.&lt;/div&gt;
 &lt;/div&gt;
 &lt;style&gt;
   #magic-eight-laboratory { width:100%; }
@@ -1554,7 +1554,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   #magic-eight-laboratory canvas { display:block; width:100%; max-width:475px; margin-inline:auto; height:100%; touch-action:none; cursor:grab; position:relative; clip-path:circle(50% at 50% 50%); }
   #magic-eight-laboratory canvas:active { cursor:grabbing; }
   #magic-eight-laboratory .eight-shadow { position:absolute; left:29%; bottom:3%; width:42%; height:6%; background:radial-gradient(ellipse, color-mix(in srgb,var(--foreground) 18%,transparent),transparent 69%); }
-  #magic-eight-laboratory .eight-caption { text-align:center; padding-top:14px; min-height:2.4em; }
+  #magic-eight-laboratory .eight-caption:not(.sr-only) { text-align:center; padding-top:14px; }
   #magic-eight-laboratory .eight-controls { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; align-items:center; }
   #magic-eight-laboratory .eight-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
   #magic-eight-laboratory .eight-loading[hidden] { display:none; }
@@ -1717,7 +1717,7 @@ try {
   let requestRender=()=&gt;{},disposeSimulation=()=&gt;{};
   const initialFace=Number.isInteger(saved?.face)?Math.max(0,Math.min(19,saved.face)):0;
   const physics=await createSimulationClient(simulationSource,seed,initialFace,()=&gt;requestRender(),error=&gt;{
-    caption.textContent=&#x27;The simulation stopped: &#x27;+error.message;caption.setAttribute(&#x27;role&#x27;,&#x27;alert&#x27;);disposeSimulation();
+    caption.classList.remove(&#x27;sr-only&#x27;);caption.textContent=&#x27;The simulation stopped: &#x27;+error.message;caption.setAttribute(&#x27;role&#x27;,&#x27;alert&#x27;);disposeSimulation();
   });
   const cleanupResources=cleanup;cleanup=()=&gt;{physics.destroy();cleanupResources();};
   if(!root.isConnected){cleanup();return;}
@@ -1865,14 +1865,14 @@ try {
     turnButton.disabled=true;
     cleanup();
   };
-  canvas.addEventListener(&#x27;webglcontextlost&#x27;,e=&gt;{e.preventDefault();setCaption(&#x27;Graphics paused. Reopen this view to restore the ball.&#x27;);disposeSimulation();});
+  canvas.addEventListener(&#x27;webglcontextlost&#x27;,e=&gt;{e.preventDefault();caption.classList.remove(&#x27;sr-only&#x27;);setCaption(&#x27;Graphics paused. Reopen this view to restore the ball.&#x27;);disposeSimulation();});
   requestRender=start;
   setCaption(answers[initialFace].join(&#x27; &#x27;));
   loading.hidden=true;turnButton.disabled=false;
   root.dataset.ready=&#x27;true&#x27;;resize();
 } catch(error){
   cleanup();
-  console.error(error);loading.hidden=true;caption.classList.remove(&#x27;text-muted&#x27;);caption.classList.add(&#x27;text-destructive&#x27;);caption.setAttribute(&#x27;role&#x27;,&#x27;alert&#x27;);caption.textContent=&#x27;The 3D renderer could not start: &#x27;+error.message;
+  console.error(error);loading.hidden=true;caption.classList.remove(&#x27;sr-only&#x27;,&#x27;text-muted&#x27;);caption.classList.add(&#x27;text-destructive&#x27;);caption.setAttribute(&#x27;role&#x27;,&#x27;alert&#x27;);caption.textContent=&#x27;The 3D renderer could not start: &#x27;+error.message;
 }
 })();
 &lt;/script&gt;

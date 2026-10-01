@@ -1,13 +1,13 @@
 <div id="magic-eight-laboratory">
+  <div class="eight-caption sr-only" aria-live="polite" aria-atomic="true">Ask a question, then turn the ball.</div>
   <div class="eight-stage">
     <div class="eight-shadow" aria-hidden="true"></div>
     <canvas aria-label="Three-dimensional Magic 8 Ball. Tap to turn it all the way over, or drag to move it." role="img"></canvas>
     <div class="eight-loading text-small text-muted" role="status">Polishing the glass…</div>
   </div>
   <div class="eight-controls">
-    <button type="button" class="btn btn-primary" data-action="turn" disabled><i data-lucide="rotate-3d" aria-hidden="true"></i> Turn the ball</button>
+    <button type="button" class="btn btn-primary" data-action="turn" disabled>Concentrate On Your Question</button>
   </div>
-  <div class="eight-caption" aria-live="polite" aria-atomic="true">Ask a question, then turn the ball.</div>
 </div>
 <style>
   #magic-eight-laboratory { width:100%; }
@@ -15,7 +15,7 @@
   #magic-eight-laboratory canvas { display:block; width:100%; max-width:475px; margin-inline:auto; height:100%; touch-action:none; cursor:grab; position:relative; clip-path:circle(50% at 50% 50%); }
   #magic-eight-laboratory canvas:active { cursor:grabbing; }
   #magic-eight-laboratory .eight-shadow { position:absolute; left:29%; bottom:3%; width:42%; height:6%; background:radial-gradient(ellipse, color-mix(in srgb,var(--foreground) 18%,transparent),transparent 69%); }
-  #magic-eight-laboratory .eight-caption { text-align:center; padding-top:14px; min-height:2.4em; }
+  #magic-eight-laboratory .eight-caption:not(.sr-only) { text-align:center; padding-top:14px; }
   #magic-eight-laboratory .eight-controls { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; align-items:center; }
   #magic-eight-laboratory .eight-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none; }
   #magic-eight-laboratory .eight-loading[hidden] { display:none; }
@@ -62,7 +62,7 @@ try {
   let requestRender=()=>{},disposeSimulation=()=>{};
   const initialFace=Number.isInteger(saved?.face)?Math.max(0,Math.min(19,saved.face)):0;
   const physics=await createSimulationClient(simulationSource,seed,initialFace,()=>requestRender(),error=>{
-    caption.textContent='The simulation stopped: '+error.message;caption.setAttribute('role','alert');disposeSimulation();
+    caption.classList.remove('sr-only');caption.textContent='The simulation stopped: '+error.message;caption.setAttribute('role','alert');disposeSimulation();
   });
   const cleanupResources=cleanup;cleanup=()=>{physics.destroy();cleanupResources();};
   if(!root.isConnected){cleanup();return;}
@@ -210,14 +210,14 @@ try {
     turnButton.disabled=true;
     cleanup();
   };
-  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();setCaption('Graphics paused. Reopen this view to restore the ball.');disposeSimulation();});
+  canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();caption.classList.remove('sr-only');setCaption('Graphics paused. Reopen this view to restore the ball.');disposeSimulation();});
   requestRender=start;
   setCaption(answers[initialFace].join(' '));
   loading.hidden=true;turnButton.disabled=false;
   root.dataset.ready='true';resize();
 } catch(error){
   cleanup();
-  console.error(error);loading.hidden=true;caption.classList.remove('text-muted');caption.classList.add('text-destructive');caption.setAttribute('role','alert');caption.textContent='The 3D renderer could not start: '+error.message;
+  console.error(error);loading.hidden=true;caption.classList.remove('sr-only','text-muted');caption.classList.add('text-destructive');caption.setAttribute('role','alert');caption.textContent='The 3D renderer could not start: '+error.message;
 }
 })();
 </script>
