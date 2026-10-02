@@ -1691,6 +1691,13 @@ const answers=[
  [&#x27;REPLY HAZY&#x27;,&#x27;TRY AGAIN&#x27;],[&#x27;ASK&#x27;,&#x27;AGAIN&#x27;,&#x27;LATER&#x27;],[&#x27;BETTER NOT&#x27;,&#x27;TELL YOU&#x27;,&#x27;NOW&#x27;],[&#x27;CANNOT&#x27;,&#x27;PREDICT&#x27;,&#x27;NOW&#x27;],[&#x27;CONCENTRATE&#x27;,&#x27;AND ASK&#x27;,&#x27;AGAIN&#x27;],
  [&quot;DON’T&quot;,&quot;COUNT ON IT&quot;],[&#x27;MY REPLY&#x27;,&#x27;IS NO&#x27;],[&#x27;MY SOURCES&#x27;,&#x27;SAY NO&#x27;],[&#x27;OUTLOOK&#x27;,&#x27;NOT SO&#x27;,&#x27;GOOD&#x27;],[&#x27;VERY&#x27;,&#x27;DOUBTFUL&#x27;]
 ];
+const specialAnswers=new Map([
+ [100,[&#x27;You Are&#x27;,&#x27;Free&#x27;]],
+ [101,[&#x27;Go To&#x27;,&#x27;Bed&#x27;]],
+ [102,[&#x27;All will&#x27;,&#x27;be well&#x27;]]
+]);
+function normalizeTurnCount(value){return Number.isSafeInteger(value)&amp;&amp;value&gt;=0?value:0;}
+function stateKey(state){return `${state.face}:${state.seed}:${normalizeTurnCount(state.turnCount)}`;}
 let cleanup=()=&gt;{};
 try {
   const gl=canvas.getContext(&#x27;webgl2&#x27;,{alpha:true,antialias:false,premultipliedAlpha:false,powerPreference:&#x27;high-performance&#x27;});
@@ -1712,7 +1719,10 @@ try {
   const uniforms={};
   for(const key of [&#x27;uResolution&#x27;,&#x27;uBall&#x27;,&#x27;uDie&#x27;,&#x27;uPosition&#x27;,&#x27;uVertices[0]&#x27;,&#x27;uFaces[0]&#x27;,&#x27;uAtlas&#x27;,&#x27;uEight&#x27;,&#x27;uLightMode&#x27;,&#x27;uOffset&#x27;,&#x27;uBubbles[0]&#x27;]) uniforms[key]=gl.getUniformLocation(program,key);
   const saved=window.openai?.widgetState?.privateContent;
-  let savedKey=saved?`${saved.face}:${saved.seed}`:&#x27;&#x27;;
+  let turnCount=normalizeTurnCount(saved?.turnCount);
+  let specialAnswer=specialAnswers.get(turnCount);
+  let faceAnswers=specialAnswer?answers.map(()=&gt;specialAnswer):answers;
+  let savedKey=saved?stateKey(saved):&#x27;&#x27;;
   const seed=saved?.seed??crypto.getRandomValues(new Uint32Array(1))[0];
   let requestRender=()=&gt;{},disposeSimulation=()=&gt;{};
   const initialFace=Number.isInteger(saved?.face)?Math.max(0,Math.min(19,saved.face)):0;
@@ -1731,10 +1741,13 @@ try {
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
     gl.generateMipmap(gl.TEXTURE_2D);gl.uniform1i(uniforms[uniform],unit);
+    return t;
   }
   const atlas=document.createElement(&#x27;canvas&#x27;);atlas.width=2560;atlas.height=2048;
   const ctx=atlas.getContext(&#x27;2d&#x27;);ctx.textAlign=&#x27;center&#x27;;ctx.textBaseline=&#x27;alphabetic&#x27;;ctx.fillStyle=&#x27;white&#x27;;
-  answers.forEach((lines,index)=&gt;{
+  function drawAtlas(){
+   ctx.clearRect(0,0,atlas.width,atlas.height);
+   faceAnswers.forEach((lines,index)=&gt;{
     const x=(index%5)*512,y=Math.floor(index/5)*512;
     // Match the shader&#x27;s triangle: apex (.5,.94), base (.04,.08)-(.96,.08).
     // Keep the lettering in its broad lower section, with real glyph margins.
@@ -1754,15 +1767,26 @@ try {
       if(placements.every(p=&gt;p.fits))break;
     }
     placements.forEach(p=&gt;ctx.fillText(p.line,x+256,y+p.baseline));
-  });
-  addTexture(atlas,0,&#x27;uAtlas&#x27;);
+   });
+  }
+  drawAtlas();
+  const atlasTexture=addTexture(atlas,0,&#x27;uAtlas&#x27;);
+  function updateAnswers(){
+    const next=specialAnswers.get(turnCount);
+    if(next===specialAnswer)return;
+    specialAnswer=next;faceAnswers=next?answers.map(()=&gt;next):answers;
+    drawAtlas();
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,atlasTexture);
+    gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,gl.RGBA,gl.UNSIGNED_BYTE,atlas);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
   const eight=document.createElement(&#x27;canvas&#x27;);eight.width=512;eight.height=512;
   const ec=eight.getContext(&#x27;2d&#x27;);ec.fillStyle=&#x27;#e9e7dc&#x27;;ec.fillRect(0,0,512,512);ec.fillStyle=&#x27;#080a0c&#x27;;ec.textAlign=&#x27;center&#x27;;ec.textBaseline=&#x27;middle&#x27;;ec.font=&#x27;500 410px Arial, sans-serif&#x27;;ec.fillText(&#x27;8&#x27;,256,275);
   addTexture(eight,1,&#x27;uEight&#x27;);
   function matrix(q){const{x,y,z,w}=q;return new Float32Array([1-2*(y*y+z*z),2*(x*y+z*w),2*(x*z-y*w),2*(x*y-z*w),1-2*(x*x+z*z),2*(y*z+x*w),2*(x*z+y*w),2*(y*z-x*w),1-2*(x*x+y*y)]);}
   const reduced=matchMedia(&#x27;(prefers-reduced-motion: reduce)&#x27;);
   const dark=matchMedia(&#x27;(prefers-color-scheme: dark)&#x27;);
-  let width=0,height=0,raf=0,last=0,angle=0,turnElapsed=0,turning=false;
+  let width=0,height=0,raf=0,last=0,angle=0,turnElapsed=0,turning=false,turnCounted=false;
   let handX=0,handY=0,handVX=0,handVY=0,drag=null;
   let active=false,persisted=false,intersecting=true,drawing=false,disposed=false;
   const ballQ={x:0,y:0,z:0,w:1};
@@ -1779,12 +1803,13 @@ try {
   }
   function save(face){
     if(!window.openai?.setWidgetState)return;
-    savedKey=`${face}:${physics.state.seed}`;
-    window.openai.setWidgetState({modelContent:{answer:answers[face].join(&#x27; &#x27;),physics:&#x27;rigid die coupled to a coarse 3D liquid flow solver; per-pixel refractive absorption&#x27;},privateContent:{face,seed:physics.state.seed}}).catch(()=&gt;{});
+    const privateContent={face,seed:physics.state.seed,turnCount};
+    savedKey=stateKey(privateContent);
+    window.openai.setWidgetState({modelContent:{answer:faceAnswers[face].join(&#x27; &#x27;),physics:&#x27;rigid die coupled to a coarse 3D liquid flow solver; per-pixel refractive absorption&#x27;},privateContent}).catch(()=&gt;{});
   }
   function turn(){
     if(turning||disposed)return;
-    turning=true;turnElapsed=0;turnButton.disabled=true;
+    turning=true;turnElapsed=0;turnCounted=false;turnButton.disabled=true;
     active=true;persisted=false;physics.wake();setCaption(&#x27;Turning the ball…&#x27;);start();
   }
   turnButton.addEventListener(&#x27;click&#x27;,turn);
@@ -1819,10 +1844,16 @@ try {
     if(disposed||document.hidden||!intersecting)return;
     drawing=true;flushDrag();
     const dt=Math.min((now-last)/1000,.05);last=now;
+    let countChanged=false;
     if(turning){
       turnElapsed+=dt;
       const t=Math.min(1,turnElapsed/4.2);
       angle=2*Math.PI*t*t*(3-2*t);
+      // Change the lettering once, with the window facing away at the half turn.
+      if(t&gt;=.5&amp;&amp;!turnCounted){
+        turnCounted=true;turnCount=Math.min(Number.MAX_SAFE_INTEGER,turnCount+1);
+        updateAnswers();countChanged=true;
+      }
       if(t===1){turning=false;angle=0;turnButton.disabled=false;setCaption(&#x27;The die is rising…&#x27;);}
     }
     handVX+=(-90*handX-15*handVX)*dt;handVY+=(-90*handY-15*handVY)*dt;handX+=handVX*dt;handY+=handVY*dt;
@@ -1831,9 +1862,10 @@ try {
     ballQ.y=Math.sin(displayAngle/2);ballQ.w=Math.cos(displayAngle/2);
     physics.setGravity(-1.65*Math.sin(angle),0,1.65*Math.cos(angle));
     const face=physics.update(now);
+    if(countChanged)save(face.index);
     if(active&amp;&amp;!turning){
       if(face.settled&amp;&amp;physics.state.settledFor&gt;.5&amp;&amp;physics.state.fluidEnergy&lt;.02&amp;&amp;!drag){
-        setCaption(answers[face.index].join(&#x27; &#x27;).toLowerCase().replace(/^./,s=&gt;s.toUpperCase()).replace(/\bi\b/g,&#x27;I&#x27;)+&#x27;.&#x27;);
+        setCaption((specialAnswer?specialAnswer.join(&#x27; &#x27;):answers[face.index].join(&#x27; &#x27;).toLowerCase().replace(/^./,s=&gt;s.toUpperCase()).replace(/\bi\b/g,&#x27;I&#x27;))+&#x27;.&#x27;);
         if(!persisted){save(face.index);persisted=true;}active=false;
       } else if(!drag) setCaption(face.windowDistance&gt;.2?&#x27;The liquid is still moving…&#x27;:&#x27;Letting the answer settle…&#x27;);
     }
@@ -1856,7 +1888,10 @@ try {
   dark.addEventListener(&#x27;change&#x27;,start);
   function stateChanged(event){
     const next=event.detail?.globals?.widgetState?.privateContent;
-    if(next&amp;&amp;Number.isInteger(next.face)&amp;&amp;next.face&gt;=0&amp;&amp;next.face&lt;20&amp;&amp;!active&amp;&amp;!drag&amp;&amp;`${next.face}:${next.seed}`!==savedKey){savedKey=`${next.face}:${next.seed}`;angle=0;physics.restoreFace(next.face,next.seed);setCaption(answers[next.face].join(&#x27; &#x27;));start();}
+    if(next&amp;&amp;Number.isInteger(next.face)&amp;&amp;next.face&gt;=0&amp;&amp;next.face&lt;20&amp;&amp;!active&amp;&amp;!drag&amp;&amp;stateKey(next)!==savedKey){
+      savedKey=stateKey(next);turnCount=normalizeTurnCount(next.turnCount);updateAnswers();
+      angle=0;physics.restoreFace(next.face,next.seed);setCaption(faceAnswers[next.face].join(&#x27; &#x27;));start();
+    }
   }
   window.addEventListener(&#x27;openai:set_globals&#x27;,stateChanged);
   const removalObserver=new MutationObserver(()=&gt;{if(!root.isConnected)disposeSimulation();});removalObserver.observe(document.body,{childList:true,subtree:true});
@@ -1869,7 +1904,7 @@ try {
   };
   canvas.addEventListener(&#x27;webglcontextlost&#x27;,e=&gt;{e.preventDefault();caption.classList.remove(&#x27;sr-only&#x27;);setCaption(&#x27;Graphics paused. Reopen this view to restore the ball.&#x27;);disposeSimulation();});
   requestRender=start;
-  setCaption(answers[initialFace].join(&#x27; &#x27;));
+  setCaption(faceAnswers[initialFace].join(&#x27; &#x27;));
   loading.hidden=true;turnButton.disabled=false;
   root.dataset.ready=&#x27;true&#x27;;resize();
 } catch(error){

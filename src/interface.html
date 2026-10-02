@@ -36,6 +36,13 @@ const answers=[
  ['REPLY HAZY','TRY AGAIN'],['ASK','AGAIN','LATER'],['BETTER NOT','TELL YOU','NOW'],['CANNOT','PREDICT','NOW'],['CONCENTRATE','AND ASK','AGAIN'],
  ["DON’T","COUNT ON IT"],['MY REPLY','IS NO'],['MY SOURCES','SAY NO'],['OUTLOOK','NOT SO','GOOD'],['VERY','DOUBTFUL']
 ];
+const specialAnswers=new Map([
+ [100,['You Are','Free']],
+ [101,['Go To','Bed']],
+ [102,['All will','be well']]
+]);
+function normalizeTurnCount(value){return Number.isSafeInteger(value)&&value>=0?value:0;}
+function stateKey(state){return `${state.face}:${state.seed}:${normalizeTurnCount(state.turnCount)}`;}
 let cleanup=()=>{};
 try {
   const gl=canvas.getContext('webgl2',{alpha:true,antialias:false,premultipliedAlpha:false,powerPreference:'high-performance'});
@@ -57,7 +64,10 @@ try {
   const uniforms={};
   for(const key of ['uResolution','uBall','uDie','uPosition','uVertices[0]','uFaces[0]','uAtlas','uEight','uLightMode','uOffset','uBubbles[0]']) uniforms[key]=gl.getUniformLocation(program,key);
   const saved=window.openai?.widgetState?.privateContent;
-  let savedKey=saved?`${saved.face}:${saved.seed}`:'';
+  let turnCount=normalizeTurnCount(saved?.turnCount);
+  let specialAnswer=specialAnswers.get(turnCount);
+  let faceAnswers=specialAnswer?answers.map(()=>specialAnswer):answers;
+  let savedKey=saved?stateKey(saved):'';
   const seed=saved?.seed??crypto.getRandomValues(new Uint32Array(1))[0];
   let requestRender=()=>{},disposeSimulation=()=>{};
   const initialFace=Number.isInteger(saved?.face)?Math.max(0,Math.min(19,saved.face)):0;
@@ -76,10 +86,13 @@ try {
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
     gl.generateMipmap(gl.TEXTURE_2D);gl.uniform1i(uniforms[uniform],unit);
+    return t;
   }
   const atlas=document.createElement('canvas');atlas.width=2560;atlas.height=2048;
   const ctx=atlas.getContext('2d');ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='white';
-  answers.forEach((lines,index)=>{
+  function drawAtlas(){
+   ctx.clearRect(0,0,atlas.width,atlas.height);
+   faceAnswers.forEach((lines,index)=>{
     const x=(index%5)*512,y=Math.floor(index/5)*512;
     // Match the shader's triangle: apex (.5,.94), base (.04,.08)-(.96,.08).
     // Keep the lettering in its broad lower section, with real glyph margins.
@@ -99,15 +112,26 @@ try {
       if(placements.every(p=>p.fits))break;
     }
     placements.forEach(p=>ctx.fillText(p.line,x+256,y+p.baseline));
-  });
-  addTexture(atlas,0,'uAtlas');
+   });
+  }
+  drawAtlas();
+  const atlasTexture=addTexture(atlas,0,'uAtlas');
+  function updateAnswers(){
+    const next=specialAnswers.get(turnCount);
+    if(next===specialAnswer)return;
+    specialAnswer=next;faceAnswers=next?answers.map(()=>next):answers;
+    drawAtlas();
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,atlasTexture);
+    gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,gl.RGBA,gl.UNSIGNED_BYTE,atlas);
+    gl.generateMipmap(gl.TEXTURE_2D);
+  }
   const eight=document.createElement('canvas');eight.width=512;eight.height=512;
   const ec=eight.getContext('2d');ec.fillStyle='#e9e7dc';ec.fillRect(0,0,512,512);ec.fillStyle='#080a0c';ec.textAlign='center';ec.textBaseline='middle';ec.font='500 410px Arial, sans-serif';ec.fillText('8',256,275);
   addTexture(eight,1,'uEight');
   function matrix(q){const{x,y,z,w}=q;return new Float32Array([1-2*(y*y+z*z),2*(x*y+z*w),2*(x*z-y*w),2*(x*y-z*w),1-2*(x*x+z*z),2*(y*z+x*w),2*(x*z+y*w),2*(y*z-x*w),1-2*(x*x+y*y)]);}
   const reduced=matchMedia('(prefers-reduced-motion: reduce)');
   const dark=matchMedia('(prefers-color-scheme: dark)');
-  let width=0,height=0,raf=0,last=0,angle=0,turnElapsed=0,turning=false;
+  let width=0,height=0,raf=0,last=0,angle=0,turnElapsed=0,turning=false,turnCounted=false;
   let handX=0,handY=0,handVX=0,handVY=0,drag=null;
   let active=false,persisted=false,intersecting=true,drawing=false,disposed=false;
   const ballQ={x:0,y:0,z:0,w:1};
@@ -124,12 +148,13 @@ try {
   }
   function save(face){
     if(!window.openai?.setWidgetState)return;
-    savedKey=`${face}:${physics.state.seed}`;
-    window.openai.setWidgetState({modelContent:{answer:answers[face].join(' '),physics:'rigid die coupled to a coarse 3D liquid flow solver; per-pixel refractive absorption'},privateContent:{face,seed:physics.state.seed}}).catch(()=>{});
+    const privateContent={face,seed:physics.state.seed,turnCount};
+    savedKey=stateKey(privateContent);
+    window.openai.setWidgetState({modelContent:{answer:faceAnswers[face].join(' '),physics:'rigid die coupled to a coarse 3D liquid flow solver; per-pixel refractive absorption'},privateContent}).catch(()=>{});
   }
   function turn(){
     if(turning||disposed)return;
-    turning=true;turnElapsed=0;turnButton.disabled=true;
+    turning=true;turnElapsed=0;turnCounted=false;turnButton.disabled=true;
     active=true;persisted=false;physics.wake();setCaption('Turning the ball…');start();
   }
   turnButton.addEventListener('click',turn);
@@ -164,10 +189,16 @@ try {
     if(disposed||document.hidden||!intersecting)return;
     drawing=true;flushDrag();
     const dt=Math.min((now-last)/1000,.05);last=now;
+    let countChanged=false;
     if(turning){
       turnElapsed+=dt;
       const t=Math.min(1,turnElapsed/4.2);
       angle=2*Math.PI*t*t*(3-2*t);
+      // Change the lettering once, with the window facing away at the half turn.
+      if(t>=.5&&!turnCounted){
+        turnCounted=true;turnCount=Math.min(Number.MAX_SAFE_INTEGER,turnCount+1);
+        updateAnswers();countChanged=true;
+      }
       if(t===1){turning=false;angle=0;turnButton.disabled=false;setCaption('The die is rising…');}
     }
     handVX+=(-90*handX-15*handVX)*dt;handVY+=(-90*handY-15*handVY)*dt;handX+=handVX*dt;handY+=handVY*dt;
@@ -176,9 +207,10 @@ try {
     ballQ.y=Math.sin(displayAngle/2);ballQ.w=Math.cos(displayAngle/2);
     physics.setGravity(-1.65*Math.sin(angle),0,1.65*Math.cos(angle));
     const face=physics.update(now);
+    if(countChanged)save(face.index);
     if(active&&!turning){
       if(face.settled&&physics.state.settledFor>.5&&physics.state.fluidEnergy<.02&&!drag){
-        setCaption(answers[face.index].join(' ').toLowerCase().replace(/^./,s=>s.toUpperCase()).replace(/\bi\b/g,'I')+'.');
+        setCaption((specialAnswer?specialAnswer.join(' '):answers[face.index].join(' ').toLowerCase().replace(/^./,s=>s.toUpperCase()).replace(/\bi\b/g,'I'))+'.');
         if(!persisted){save(face.index);persisted=true;}active=false;
       } else if(!drag) setCaption(face.windowDistance>.2?'The liquid is still moving…':'Letting the answer settle…');
     }
@@ -201,7 +233,10 @@ try {
   dark.addEventListener('change',start);
   function stateChanged(event){
     const next=event.detail?.globals?.widgetState?.privateContent;
-    if(next&&Number.isInteger(next.face)&&next.face>=0&&next.face<20&&!active&&!drag&&`${next.face}:${next.seed}`!==savedKey){savedKey=`${next.face}:${next.seed}`;angle=0;physics.restoreFace(next.face,next.seed);setCaption(answers[next.face].join(' '));start();}
+    if(next&&Number.isInteger(next.face)&&next.face>=0&&next.face<20&&!active&&!drag&&stateKey(next)!==savedKey){
+      savedKey=stateKey(next);turnCount=normalizeTurnCount(next.turnCount);updateAnswers();
+      angle=0;physics.restoreFace(next.face,next.seed);setCaption(faceAnswers[next.face].join(' '));start();
+    }
   }
   window.addEventListener('openai:set_globals',stateChanged);
   const removalObserver=new MutationObserver(()=>{if(!root.isConnected)disposeSimulation();});removalObserver.observe(document.body,{childList:true,subtree:true});
@@ -214,7 +249,7 @@ try {
   };
   canvas.addEventListener('webglcontextlost',e=>{e.preventDefault();caption.classList.remove('sr-only');setCaption('Graphics paused. Reopen this view to restore the ball.');disposeSimulation();});
   requestRender=start;
-  setCaption(answers[initialFace].join(' '));
+  setCaption(faceAnswers[initialFace].join(' '));
   loading.hidden=true;turnButton.disabled=false;
   root.dataset.ready='true';resize();
 } catch(error){
